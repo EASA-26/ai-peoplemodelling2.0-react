@@ -68,7 +68,7 @@ const getProjectTokens = (projectName: unknown) => {
     return Array.from(new Set(tokens.flatMap(token => aliases[token] || [token])));
 };
 
-const getGradeTokens = (value: unknown) => String(value ?? "").toUpperCase().match(/(?:CM|GM|M|E)\d{2}/g) || [];
+const getGradeTokens = (value: unknown): string[] => String(value ?? "").toUpperCase().match(/(?:CM|GM|M|E)\d{2}/g) ?? [];
 
 const getJdSearchText = (jd: any) => [
     jd?.job_title,
