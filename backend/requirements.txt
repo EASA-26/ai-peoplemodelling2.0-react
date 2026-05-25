@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+pandas
+openpyxl
+pypdf2
+databricks-sdk
+tenacity
+python-multipart
+sqlalchemy
+pydantic
+pg8000
+
+pgvector

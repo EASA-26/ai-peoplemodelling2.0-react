@@ -1,0 +1,7 @@
+command: ["sh", "-c", "pip install -r backend/requirements.txt && uvicorn backend.main:app --host 0.0.0.0 --port ${DATABRICKS_APP_PORT:-8000}"]
+
+env:
+  - name: ENDPOINT_NAME
+    value: "databricks-llama-4-maverick"
+  - name: HR_PEOPLE_APP_UC_VOLUME
+    valueFrom: volume
