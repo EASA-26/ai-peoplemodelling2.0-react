@@ -5,8 +5,13 @@ import { UploadCloud, Trash2, FileText, Users, Briefcase, FileBadge, RefreshCw, 
 
 export default function DataManagementPage() {
     const [activeTab, setActiveTab] = useState("jds");
-    const [loading, setLoading] = useState(false);
-    const [items, setItems] = useState<any[]>([]);
+    const [itemsByTab, setItemsByTab] = useState<Record<string, any[]>>({
+        jds: [],
+        profiles: [],
+        people: [],
+        talent: [],
+    });
+    const [loadingTabs, setLoadingTabs] = useState<Record<string, boolean>>({});
     const [message, setMessage] = useState<string>("");
 
     const tabs = useMemo(() => ([
@@ -23,23 +28,30 @@ export default function DataManagementPage() {
         talent: "talent-cards",
     };
 
-    const fetchItems = async (tab: string) => {
-        setLoading(true);
+    const fetchItems = async (tab: string, silent = false) => {
+        setLoadingTabs(prev => ({ ...prev, [tab]: true }));
         try {
             const res = await axios.get(`/api/uploads/${endpointMap[tab]}`);
-            setItems(Array.isArray(res.data) ? res.data : []);
+            setItemsByTab(prev => ({ ...prev, [tab]: Array.isArray(res.data) ? res.data : [] }));
         } catch (e: any) {
             console.error(e);
-            setItems([]);
-            setMessage(e?.response?.data?.detail || "Unable to load records.");
+            setItemsByTab(prev => ({ ...prev, [tab]: [] }));
+            if (!silent) {
+                setMessage(e?.response?.data?.detail || "Unable to load records.");
+            }
         } finally {
-            setLoading(false);
+            setLoadingTabs(prev => ({ ...prev, [tab]: false }));
         }
     };
 
     useEffect(() => {
-        fetchItems(activeTab);
-    }, [activeTab]);
+        const tabIds = tabs.map(tab => tab.id);
+        tabIds.forEach(tab => fetchItems(tab, true));
+        const refreshTimer = window.setTimeout(() => {
+            tabIds.forEach(tab => fetchItems(tab, true));
+        }, 3500);
+        return () => window.clearTimeout(refreshTimer);
+    }, [tabs]);
 
     const uploadSingleFileInChunks = async (category: string, file: File) => {
         const uploadId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -81,9 +93,10 @@ export default function DataManagementPage() {
         const files = e.target.files ? Array.from(e.target.files) : [];
         if (files.length === 0) return;
 
-        setLoading(true);
+        const tab = activeTab;
+        const category = endpointMap[tab];
+        setLoadingTabs(prev => ({ ...prev, [tab]: true }));
         setMessage("Uploading files...");
-        const category = endpointMap[activeTab];
 
         try {
             const uploadedMeta = [];
@@ -116,15 +129,15 @@ export default function DataManagementPage() {
                 ? ` Warnings: ${finalizeData.errors.join(" | ")}`
                 : "";
             setMessage(`${finalizeData?.message || "Upload successful."}${details}${errors}`);
-            await fetchItems(activeTab);
-            if (activeTab === "jds" || activeTab === "talent") {
-                setTimeout(() => fetchItems(activeTab), 4000);
+            await fetchItems(tab);
+            if (tab === "jds" || tab === "talent") {
+                window.setTimeout(() => fetchItems(tab, true), 4000);
             }
         } catch (err: any) {
             setMessage(`Upload failed: ${err?.message || "Network error"}`);
         } finally {
             e.target.value = "";
-            setLoading(false);
+            setLoadingTabs(prev => ({ ...prev, [tab]: false }));
         }
     };
 
@@ -152,6 +165,8 @@ export default function DataManagementPage() {
 
     const accept = activeTab === "jds" || activeTab === "talent" ? ".pdf" : ".xlsx,.xls";
     const multi = activeTab === "jds" || activeTab === "talent";
+    const items = itemsByTab[activeTab] || [];
+    const isRefreshing = Boolean(loadingTabs[activeTab]);
 
     return (
         <div className="space-y-6 max-w-7xl mx-auto">
@@ -184,6 +199,9 @@ export default function DataManagementPage() {
                         <p className="text-xs text-slate-500 mt-1">
                             Upload and manage source data required for AI pipeline matching.
                         </p>
+                        {isRefreshing && (
+                            <p className="text-xs text-blue-600 mt-2">Refreshing records automatically...</p>
+                        )}
                         {message && (
                             <div className="mt-3 text-sm rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700">
                                 {message}
@@ -203,7 +221,7 @@ export default function DataManagementPage() {
                             />
                         </label>
                         <button onClick={() => fetchItems(activeTab)} className="bg-white text-slate-700 hover:bg-slate-50 font-medium py-2 px-4 rounded-lg flex items-center gap-2 transition-colors border border-slate-200 text-sm">
-                            <RefreshCw className="w-4 h-4" /> Refresh
+                            <RefreshCw className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""}`} /> Refresh
                         </button>
                         <button onClick={handleDeleteAll} className="bg-slate-50 text-red-600 hover:bg-red-50 hover:border-red-200 font-medium py-2 px-4 rounded-lg flex items-center gap-2 transition-colors border border-slate-200 text-sm">
                             <Trash2 className="w-4 h-4" /> Drop All
@@ -212,12 +230,10 @@ export default function DataManagementPage() {
                 </div>
 
                 <div className="p-0">
-                    {loading ? (
-                        <div className="p-12 text-center text-slate-400">Loading records...</div>
-                    ) : items.length === 0 ? (
+                    {items.length === 0 ? (
                         <div className="p-16 text-center text-slate-400 flex flex-col items-center">
                             <Database className="w-12 h-12 mb-4 text-slate-200" />
-                            <p>No records found in current storage.</p>
+                            <p>{isRefreshing ? "Records will appear here automatically." : "No records found in current storage."}</p>
                         </div>
                     ) : (
                         <div className="overflow-x-auto">

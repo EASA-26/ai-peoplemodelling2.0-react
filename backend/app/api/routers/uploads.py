@@ -896,8 +896,8 @@ async def upload_talent_cards(background_tasks: BackgroundTasks, files: List[Upl
 
 
 @router.get("/talent-cards")
-def get_talent_cards():
-    _sync_talent_cards_with_storage()
+def get_talent_cards(background_tasks: BackgroundTasks):
+    background_tasks.add_task(_sync_talent_cards_with_storage)
     conn = get_db_connection()
     rows = conn.execute("SELECT id, data FROM talent_cards ORDER BY id DESC").fetchall()
     conn.close()
@@ -951,8 +951,8 @@ async def upload_position_profiles(file: UploadFile = File(...)):
 
 
 @router.get("/position-profiles")
-def get_position_profiles():
-    _sync_position_profiles_with_storage()
+def get_position_profiles(background_tasks: BackgroundTasks):
+    background_tasks.add_task(_sync_position_profiles_with_storage)
     conn = get_db_connection()
     rows = conn.execute("SELECT id, data FROM position_profiles ORDER BY id DESC").fetchall()
     conn.close()
@@ -1023,8 +1023,8 @@ async def upload_job_descriptions(background_tasks: BackgroundTasks, files: List
 
 
 @router.get("/job-descriptions")
-def get_job_descriptions():
-    _sync_job_descriptions_with_storage()
+def get_job_descriptions(background_tasks: BackgroundTasks):
+    background_tasks.add_task(_sync_job_descriptions_with_storage)
     df = fetch_dataframe(
         "SELECT id, position, job_title, grade, filepath, COALESCE(original_filename, '') AS original_filename FROM job_descriptions ORDER BY id DESC"
     )
@@ -1120,8 +1120,8 @@ async def upload_people_model(file: UploadFile = File(...)):
 
 
 @router.get("/people-model")
-def get_people_model():
-    _sync_people_model_with_storage()
+def get_people_model(background_tasks: BackgroundTasks):
+    background_tasks.add_task(_sync_people_model_with_storage)
     conn = get_db_connection()
     rows = conn.execute("SELECT id, data FROM candidates ORDER BY id DESC").fetchall()
     conn.close()
