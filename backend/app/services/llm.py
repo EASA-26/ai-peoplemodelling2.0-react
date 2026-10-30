@@ -6,10 +6,23 @@ from databricks.sdk.errors import NotFound, BadRequest
 DEFAULT_EP = os.getenv("ENDPOINT_NAME", "databricks-llama-4-maverick")
 
 def _try_sdk_openai_client(w: WorkspaceClient):
+    """The SDK's OpenAI-compatible client, or None if it is unavailable.
+
+    None means "use the REST fallbacks below", which is the whole point of this
+    function. It previously guarded only against the method not EXISTING, not against
+    it RAISING -- and get_open_ai_client() raises ImportError when the SDK's optional
+    `openai` extra is not installed. That exception escaped, so the two REST fallbacks
+    never ran and every recommendation came back empty, on a server where plain HTTP to
+    the endpoint would have worked perfectly well.
+    """
     get_client = getattr(w.serving_endpoints, "get_open_ai_client", None)
-    if callable(get_client):
+    if not callable(get_client):
+        return None
+    try:
         return get_client()
-    return None
+    except Exception as exc:
+        print(f"llm: SDK OpenAI client unavailable ({type(exc).__name__}: {exc}); using the REST fallback", flush=True)
+        return None
 
 @retry(reraise=True, stop=stop_after_attempt(6), wait=wait_exponential(multiplier=1, min=1, max=20))
 def chat(messages, model=None, temperature=0.2, max_tokens=1024):

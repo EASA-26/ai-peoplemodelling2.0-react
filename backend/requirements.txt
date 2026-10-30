@@ -4,6 +4,10 @@ pandas
 openpyxl
 pypdf2
 databricks-sdk
+# The SDK's OpenAI-compatible client is an optional extra. Without it
+# get_open_ai_client() raises ImportError and every AI recommendation comes back
+# empty. Databricks Apps already provides it; a plain Windows venv does not.
+openai>=1.45.0
 tenacity
 python-multipart
 sqlalchemy
