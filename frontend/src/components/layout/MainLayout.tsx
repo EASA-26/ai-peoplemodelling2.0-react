@@ -4,11 +4,14 @@ import {
     Users,
     UserPlus,
     Database,
-    Building,
     LogOut,
     Bell,
     HelpCircle
 } from "lucide-react";
+// Imported rather than referenced by path: Vite fingerprints the file and rewrites the
+// URL with the build's base, so it resolves under /peoplemodelling/ as well as at the
+// root. A literal "/assets/..." would leave the application behind IIS.
+import tnbGencoTed from "@/assets/tnb-genco-ted.png";
 
 export default function MainLayout() {
     const location = useLocation();
@@ -38,14 +41,23 @@ export default function MainLayout() {
         <div className="flex h-screen bg-[#F8FAFC]">
             {/* Sidebar */}
             <aside className="w-64 bg-white border-r border-slate-200 flex flex-col hidden md:flex">
-                <div className="p-6 flex items-center gap-3">
-                    <div className="bg-blue-600 p-2 rounded-lg">
-                        <Building className="w-6 h-6 text-white" />
-                    </div>
-                    <div>
-                        <h1 className="font-bold text-slate-800 text-lg leading-tight">People Modelling.AI</h1>
-                        <p className="text-xs text-slate-500">Admin Dashboard</p>
-                    </div>
+                {/* Brand band. The supplied logo has an opaque #2b2825 field baked into
+                    the PNG, so the band is that exact colour and the image blends into
+                    it -- otherwise it reads as a dark rectangle pasted onto a white
+                    sidebar. Full-bleed to the sidebar edges for the same reason. */}
+                <div className="bg-[#2b2825] px-5 py-4 flex items-center justify-center">
+                    <img
+                        src={tnbGencoTed}
+                        alt="TNB GENCO · TED"
+                        className="h-10 w-auto max-w-full"
+                    />
+                </div>
+                {/* The blue Building tile that used to sit here is gone: with the brand
+                    band above it, an icon, a logo and a title stacked together was three
+                    marks competing for the same job. */}
+                <div className="px-6 pt-5 pb-1">
+                    <h1 className="font-bold text-slate-800 text-lg leading-tight">People Modelling.AI</h1>
+                    <p className="text-xs text-slate-500">Admin Dashboard</p>
                 </div>
 
                 <nav className="flex-1 px-4 py-6 space-y-2">
