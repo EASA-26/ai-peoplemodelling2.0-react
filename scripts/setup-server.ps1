@@ -322,17 +322,13 @@ $deployAction = New-ScheduledTaskAction -Execute "powershell.exe" `
 # seconds apart instead of five minutes, and it can stop repeating altogether. A deploy
 # pipeline that quietly stops polling is worse than one that was never built, because
 # nothing anywhere reports it.
-try {
-    $deployTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date `
-        -RepetitionInterval (New-TimeSpan -Minutes $DeployEveryMinutes) `
-        -RepetitionDuration ([TimeSpan]::MaxValue)
-} catch {
-    # Some Windows builds reject TimeSpan::MaxValue here. Ten years is indefinite enough.
-    $deployTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date `
-        -RepetitionInterval (New-TimeSpan -Minutes $DeployEveryMinutes)
-    $deployTrigger.Repetition.Duration = "P3650D"
-    $deployTrigger.Repetition.StopAtDurationEnd = $false
-}
+# Ten years, not [TimeSpan]::MaxValue. MaxValue serialises to P99999999DT23H59M59S,
+# which this server's Task Scheduler rejects outright: "The task XML contains a value
+# which is incorrectly formatted or out of range." Ten years of five-minute polling is
+# indefinite enough for a dev server, and it registers.
+$deployTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date `
+    -RepetitionInterval (New-TimeSpan -Minutes $DeployEveryMinutes) `
+    -RepetitionDuration (New-TimeSpan -Days 3650)
 $deploySettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -MultipleInstances IgnoreNew
 Register-ScheduledTask -TaskName $deployTask -Action $deployAction -Trigger $deployTrigger `
