@@ -127,7 +127,8 @@ if ($script:problems.Count -gt 0) {
 Heading "Plan"
 Would "create $AppRoot\.app_state and $AppRoot\logs"
 Would "write $repo\run-peoplemodelling.cmd (untracked, from scripts\run-peoplemodelling.cmd)"
-Would "pip install --ignore-installed -r backend\requirements.txt  (machine-wide)"
+Would "create the virtual environment $repo\.venv  (shared C:\Python314 is left alone)"
+Would "pip install -r backend\requirements.txt  INTO .venv"
 Would "npm install + npm run build  with APP_BASE_PATH=$BasePath"
 Would "create scheduled task '$TaskName' (SYSTEM, at startup, restart on failure)"
 Would "create scheduled task '$deployTask' (SYSTEM, every $DeployEveryMinutes minutes)"
@@ -154,19 +155,35 @@ $liveLauncher = Join-Path $repo "run-peoplemodelling.cmd"
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "run-peoplemodelling.cmd") -Destination $liveLauncher -Force
 Say "  wrote $liveLauncher"
 
-Say "  installing backend requirements machine-wide..."
-# NO --ignore-installed. C:\Python314 is SHARED -- FazuraGPT, the Talent Portal and
-# others run on it. --ignore-installed forces a reinstall of EVERY requirement,
-# including packages those apps have loaded right now, and Windows will not let pip
-# replace a .pyd a live process has mapped: it fails with "[WinError 5] Access is
-# denied" on, say, numpy, while already elevated. Worse, where it succeeds it has
-# silently swapped another team's dependency underneath them.
+# The app gets its OWN interpreter. C:\Python314 is shared with FazuraGPT, the Talent
+# Portal, coalrating, PI Data Extraction and SOA Ageing, and this app's requirements
+# disagree with theirs -- databricks-sdk wants a newer certifi than they have. Installing
+# into the shared one would change the CA bundle four other teams trust, and every future
+# requirements change would pose the same question to an UNATTENDED five-minute deploy.
 #
-# Plain install adds only what is missing and leaves everything else alone. The
-# per-user-shadowing problem --ignore-installed exists to solve is handled below, by
-# asking the interpreter where each module actually resolves from.
-& $PythonExe -m pip install -r (Join-Path $repo "backend\requirements.txt") 2>&1 |
+# No --system-site-packages: inheriting the shared packages would inherit the very
+# conflict this avoids.
+$venvDir = Join-Path $repo ".venv"
+$venvPython = Join-Path $venvDir "Scripts\python.exe"
+if (Test-Path -LiteralPath $venvPython) {
+    Say "  have  virtual environment $venvDir"
+} else {
+    Say "  creating the virtual environment (shared C:\Python314 is not touched)..."
+    & $PythonExe -m venv $venvDir 2>&1 | ForEach-Object { Say "    $_" }
+    if (-not (Test-Path -LiteralPath $venvPython)) {
+        Say "  FAIL  could not create $venvDir"
+        exit 1
+    }
+    Say "  ok    created $venvDir"
+}
+
+Say "  installing backend requirements into .venv (a few minutes -- pandas and numpy)..."
+# NO --ignore-installed, even here: it forces a pointless full reinstall on every run,
+# and it is the flag that failed with "[WinError 5] Access is denied" trying to replace
+# a .pyd the running app had mapped.
+& $venvPython -m pip install -r (Join-Path $repo "backend\requirements.txt") 2>&1 |
     Select-Object -Last 6 | ForEach-Object { Say "    $_" }
+$PythonExe = $venvPython   # everything below asks the interpreter the APP will use
 
 # Where does each import ACTUALLY come from? Test-Path on site-packages cannot tell a
 # machine-wide install from a per-user one that shadows it, and that distinction is the

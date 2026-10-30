@@ -42,9 +42,15 @@ $stateFile  = Join-Path $repo "logs\deploy.state.json"
 $failedFile = Join-Path $repo "logs\deploy.failed.json"
 $lockFile   = Join-Path $repo "logs\deploy.lock"
 
-# The Python the app runs under. ALWAYS the full path: a bare "python" is not on
-# SYSTEM's PATH, and the task then fails with result 1 and no log at all.
-$pythonExe = "C:\Python314\python.exe"
+# The Python the app runs under: its OWN virtual environment, never C:\Python314.
+# That interpreter is shared with FazuraGPT, the Talent Portal and three other apps,
+# and this app's requirements disagree with theirs. An unattended deploy that can
+# upgrade a package four other teams depend on is a bad idea however careful the flags
+# are, so it cannot reach them at all.
+#
+# ALWAYS the full path: a bare "python" is not on SYSTEM's PATH, and the task then
+# fails with result 1 and no log at all.
+$pythonExe = Join-Path $repo ".venv\Scripts\python.exe"
 
 # Where IIS serves the app. The frontend is built with this as its base, so assets and
 # API calls resolve under the application rather than at the site root.
@@ -423,19 +429,23 @@ function Invoke-Build {
 }
 
 function Invoke-PipInstall {
-    # The app runs as SYSTEM, so packages must be machine-wide: a per-user install is
-    # invisible to it, and the app then fails imports while every standalone test passes.
-    # This task runs as SYSTEM, so it is already elevated and a plain install lands
-    # machine-wide.
+    # Installs into the app's OWN virtual environment ($pythonExe above), so nothing
+    # here can reach the shared C:\Python314 that FazuraGPT, the Talent Portal and three
+    # other apps run on. That isolation is the point: an unattended deploy must not be
+    # able to change another team's dependencies.
     #
-    # Deliberately NOT --ignore-installed. C:\Python314 is SHARED with FazuraGPT, the
-    # Talent Portal and others. That flag forces a reinstall of every requirement,
-    # including packages those apps have loaded -- which Windows refuses ("[WinError 5]
-    # Access is denied" on a .pyd a live process has mapped) and which, where it
-    # succeeds, swaps another team's dependency underneath them. A deploy of this app
-    # must never be able to break theirs.
-    if ($WhatIf) { Write-Log "WHATIF would run pip install -r backend\requirements.txt"; return $true }
+    # Still no --ignore-installed. Even inside a venv it forces a pointless full
+    # reinstall every deploy, and it is exactly the flag that failed with "[WinError 5]
+    # Access is denied" when it tried to replace a .pyd the running app had mapped.
+    if ($WhatIf) { Write-Log "WHATIF would run pip install -r backend\requirements.txt in .venv"; return $true }
     $req = Join-Path $repo "backend\requirements.txt"
+
+    # No venv, no install. Falling back to the system interpreter here would quietly
+    # undo the isolation and start writing into the shared one again.
+    if (-not (Test-Path -LiteralPath $pythonExe)) {
+        Write-Log "the virtual environment is missing ($pythonExe). Run scripts\setup-server.ps1 -Apply; NOT falling back to the shared interpreter." "ERROR"
+        return $false
+    }
 
     # Look before touching anything shared. --dry-run names what would change; an
     # upgrade of an already-installed package is the dangerous case, so it is logged
@@ -459,7 +469,9 @@ function Invoke-PipInstall {
         return $false
     }
     if ($pip.Output -match "Defaulting to user installation") {
-        Write-Log "pip defaulted to a USER install -- SYSTEM will not see these packages." "ERROR"
+        # Should be impossible inside a venv; if it ever happens the venv is broken and
+        # packages went somewhere the app will not find them.
+        Write-Log "pip defaulted to a USER install -- the virtual environment looks broken." "ERROR"
         return $false
     }
     Write-Log "backend requirements installed"

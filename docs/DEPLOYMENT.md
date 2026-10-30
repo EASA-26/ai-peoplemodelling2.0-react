@@ -45,7 +45,7 @@ deploys itself within five minutes** with a health gate and an automatic rollbac
 | Public URL | `https://gencodev.tnb.com.my/peoplemodelling/` |
 | App task | `PeopleModelling` (SYSTEM, at startup, restarts on failure) |
 | Deploy task | `PeopleModelling-AutoDeploy` (SYSTEM, every 5 min) |
-| Python | `C:\Python314\python.exe` — **always the full path** |
+| Python | `D:\EASA\PeopleModelling\.venv\Scripts\python.exe` — **its own venv**, always the full path |
 | Database | SQLite at `D:\EASA\PeopleModelling\.app_state\hr_ai.db` |
 | Logs | `logs\app.log` (app), `logs\deploy.log` (deploys) |
 
@@ -195,16 +195,25 @@ When it is clean:
 powershell -ExecutionPolicy Bypass -File D:\EASA\PeopleModelling\scripts\setup-server.ps1 -Apply
 ```
 
-It creates the folders, writes the launcher, installs the backend requirements
-**machine-wide**, builds the frontend with `APP_BASE_PATH=/peoplemodelling/`, creates
-both scheduled tasks, and starts the app.
+It creates the folders, writes the launcher, creates `.venv` and installs the backend
+requirements **into it**, builds the frontend with `APP_BASE_PATH=/peoplemodelling/`,
+creates both scheduled tasks, and starts the app.
 
-> **The pip rule that caused a real multi-hour outage.** The app runs as SYSTEM. A pip
-> install from a non-elevated shell silently falls back to *per-user* site-packages,
-> which SYSTEM cannot see — the app then fails imports while every standalone test
-> passes. The script checks for this and refuses if it sees
-> `Defaulting to user installation`. A WinRM session is already elevated, so this is
-> handled; it matters if you ever install a package by hand.
+> **Why its own virtual environment, when FazuraGPT uses the machine-wide one.**
+> `C:\Python314` is shared by FazuraGPT, the Talent Portal, coalrating, PI Data
+> Extraction and SOA Ageing. This app's requirements disagree with theirs —
+> `databricks-sdk` needs a newer `certifi` than they have — so installing machine-wide
+> would change the CA bundle four other teams trust. And the deploy here is
+> **unattended, every five minutes**: every future `requirements.txt` change would put
+> that same question to a script running at 3am. The venv makes it impossible for this
+> app to disturb theirs. It costs about 400 MB and slightly slower `pip` runs.
+>
+> This was learned the hard way during the first deploy: `pip install
+> --ignore-installed` (taken from the Hana runbook, where it solves a different problem)
+> tried to reinstall numpy, which a running app had loaded, and failed with
+> `[WinError 5] Access is denied` **while already elevated**. A locked `.pyd` is a file
+> in use, not a permissions problem — and a flag that reaches into other teams' packages
+> is wrong on a shared box however it is spelled.
 
 ---
 
@@ -362,7 +371,8 @@ Stop-ScheduledTask -TaskName PeopleModelling; Start-Sleep -Seconds 3; Start-Sche
 |---|---|---|
 | 502 at `/peoplemodelling/` | Backend process is down; IIS is fine | `check-health.ps1`; read `logs\app.log`; start the task |
 | `not retrying <hash>` in `deploy.log` | That commit failed and is being held | Read the first `ERROR` above the rollback; push a fix or a revert |
-| App up, but a feature fails while standalone tests pass | Per-user vs machine-wide package split — SYSTEM cannot see per-user | Elevated `pip install --ignore-installed -r backend\requirements.txt`, then restart |
+| App up, but a feature fails while standalone tests pass | A package is missing from the venv, or you tested with the wrong interpreter | Test with `.venv\Scripts\python.exe`, **not** `C:\Python314\python.exe`. Then `.venv\Scripts\python.exe -m pip install -r backend\requirements.txt` and restart |
+| `[WinError 5] Access is denied` on a `.pyd` during pip, while elevated | A **file in use** — a running app has that DLL mapped — not a permissions problem | Never force it. Inside the venv this should not happen; if it does, stop the app task first. Never use `--ignore-installed` on `C:\Python314` |
 | Task `LastTaskResult` = 267009 | **RUNNING.** This is success, not an error | — |
 | Task result 1 and no log at all | Launcher missing, or a bare `python` instead of the full path | Re-run `setup-server.ps1 -Apply` |
 | `could not bind port 8021` in `app.log` | Another copy is still running | Find the owner of 8021 and stop *that* — never a blind kill |
