@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { UploadCloud, Trash2, FileText, Users, Briefcase, FileBadge, RefreshCw, Database } from "lucide-react";
+import { apiUrl } from "@/lib/utils";
 
 
 export default function DataManagementPage() {
@@ -68,7 +69,11 @@ export default function DataManagementPage() {
             fd.append("total_chunks", String(totalChunks));
             fd.append("chunk", blob, file.name);
 
-            const res = await fetch(`/api/uploads/chunk/${category}`, {
+            // apiUrl(), not a bare "/api/...": under IIS at /peoplemodelling a root
+            // path leaves this application, and the shared site's own rewrite sends
+            // ^api/(.*) to another team's backend on port 9000 -- so the upload would
+            // be POSTed into their app. See apiUrl in src/lib/utils.ts.
+            const res = await fetch(apiUrl(`/api/uploads/chunk/${category}`), {
                 method: "POST",
                 body: fd,
                 credentials: "same-origin",
@@ -104,7 +109,7 @@ export default function DataManagementPage() {
                 uploadedMeta.push(await uploadSingleFileInChunks(category, file));
             }
 
-            const finalizeRes = await fetch(`/api/uploads/finalize/${category}`, {
+            const finalizeRes = await fetch(apiUrl(`/api/uploads/finalize/${category}`), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ uploads: uploadedMeta }),
