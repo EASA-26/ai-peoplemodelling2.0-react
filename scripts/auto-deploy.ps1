@@ -505,8 +505,25 @@ try {
     if ($branchResult.ExitCode -ne 0) { throw "could not read the branch: $($branchResult.Output)" }
     $branch = $branchResult.Output.Trim()
 
-    $fetch = Invoke-Git @("fetch", "origin", $branch)
-    if ($fetch.ExitCode -ne 0) { throw "git fetch failed: $($fetch.Output)" }
+    # Retry the fetch. TNB egress is Zscaler-intercepted, and it intermittently closes a
+    # connection without a reply -- git reports "Empty reply from server" and the run
+    # fails. Observed on 30 Oct 2026 at 22:00, with the runs either side at 21:55 and
+    # 22:05 both fine. The next run five minutes later would recover anyway, but a
+    # transient blip should not be logged as a failed deploy: that is how a real failure
+    # stops being noticed.
+    #
+    # A genuine problem -- the repo gone, DNS broken, the network down -- fails all three
+    # attempts and is reported as before.
+    $fetch = $null
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        $fetch = Invoke-Git @("fetch", "origin", $branch)
+        if ($fetch.ExitCode -eq 0) { break }
+        if ($attempt -lt 3) {
+            Write-Log "git fetch attempt $attempt failed ($($fetch.Output -replace "`n", ' ')); retrying" "WARN"
+            Start-Sleep -Seconds (3 * $attempt)
+        }
+    }
+    if ($fetch.ExitCode -ne 0) { throw "git fetch failed after 3 attempts: $($fetch.Output)" }
 
     $localResult  = Invoke-Git @("rev-parse", "HEAD")
     $remoteResult = Invoke-Git @("rev-parse", "origin/$branch")
