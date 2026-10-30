@@ -420,11 +420,21 @@ function Invoke-Build {
         Write-Log "npm run build failed: $($build.Output)" "ERROR"
         return $false
     }
-    if (-not (Test-Path (Join-Path $repo "frontend\dist\index.html"))) {
+    $indexPath = Join-Path $repo "frontend\dist\index.html"
+    if (-not (Test-Path $indexPath)) {
         Write-Log "build reported success but frontend\dist\index.html is missing" "ERROR"
         return $false
     }
-    Write-Log "frontend built"
+    # Prove the base path reached the output. A build with the wrong base SUCCEEDS and
+    # then serves a page whose assets 404 behind IIS -- a blank screen that looks like a
+    # server fault and is not. This is the gate that would have caught the deploy which
+    # restored git's root-path dist and skipped the rebuild.
+    $indexHtml = Get-Content $indexPath -Raw
+    if ($indexHtml -notmatch [regex]::Escape("$basePath" + "assets/")) {
+        Write-Log "built index.html does not reference ${basePath}assets/ -- the base path did not reach the build; the app would serve a blank page" "ERROR"
+        return $false
+    }
+    Write-Log "frontend built; assets referenced under $basePath"
     return $true
 }
 
@@ -579,7 +589,9 @@ try {
     }
 
     if ($WhatIf) {
-        Write-Log "WHATIF would pull, then build=$frontendChanged, pip=$requirementsChanged, restart=$backendChanged"
+        # build is always true: the pull restores git's root-path dist, so it must be
+        # rebuilt whether or not frontend/ changed.
+        Write-Log "WHATIF would pull, then build=True (always), pip=$requirementsChanged, restart=$backendChanged"
         Set-Outcome "whatif" "would deploy $($remote.Substring(0,7))"
         Write-RunState -Branch $branch -Local $local -Remote $remote
         exit 0
@@ -614,7 +626,9 @@ try {
         Save-FailedDeploy -Commit $remote -Reason $Reason -RolledBackTo $local -Branch $branch
         $reset = Invoke-Git @("reset", "--hard", $local)
         if ($reset.ExitCode -ne 0) { Write-Log "ROLLBACK FAILED: $($reset.Output)" "ERROR"; return }
-        if ($frontendChanged) { [void](Invoke-Build -ExpectCommit $local) }
+        # Always rebuild on the way back too: the reset restored git's root-path dist,
+        # which does not work behind the /peoplemodelling application.
+        [void](Invoke-Build -ExpectCommit $local)
         if ($backendChanged)  { [void](Restart-App -Port $port); [void](Wait-Healthy -Port $port) }
         Write-Log "rolled back to $($local.Substring(0,7))"
     }
@@ -627,8 +641,18 @@ try {
         exit 1
     }
 
-    # 3. Build.
-    if ($frontendChanged -and -not (Invoke-Build -ExpectCommit $remote)) {
+    # 3. Build -- ALWAYS, not only when frontend/ changed.
+    #
+    # Step 1 restores frontend\dist to what git has, because it is tracked and a dirty
+    # copy makes the pull refuse. What git has is the ORIGINAL root-path build: assets
+    # at /assets/..., which under /peoplemodelling resolve to the shared site root and
+    # 404. So a deploy that restored dist and then skipped the build because only
+    # scripts/ changed left the app serving a blank page -- which is exactly what
+    # happened on 30 Oct 2026 after three script-only deploys in a row.
+    #
+    # Restoring and not rebuilding is never correct. The build costs about 20 seconds
+    # and only runs when there is actually a commit to deploy, not on every poll.
+    if (-not (Invoke-Build -ExpectCommit $remote)) {
         & $rollback "frontend build failed"
         Set-Outcome "failed" "build failed; rolled back to $($local.Substring(0,7))"
         Write-RunState -Branch $branch -Local $local -Remote $remote
