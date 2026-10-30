@@ -316,13 +316,36 @@ Say "  creating scheduled task '$deployTask'..."
 $deployAction = New-ScheduledTaskAction -Execute "powershell.exe" `
     -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $PSScriptRoot 'auto-deploy.ps1')`"" `
     -WorkingDirectory $repo
-$deployTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date `
-    -RepetitionInterval (New-TimeSpan -Minutes $DeployEveryMinutes)
+# -RepetitionDuration matters. Without it the trigger is registered with an EMPTY
+# Duration and StopAtDurationEnd = True -- "stop at the end of a duration that was never
+# defined" -- and Task Scheduler's behaviour then is not dependable: observed firing 90
+# seconds apart instead of five minutes, and it can stop repeating altogether. A deploy
+# pipeline that quietly stops polling is worse than one that was never built, because
+# nothing anywhere reports it.
+try {
+    $deployTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date `
+        -RepetitionInterval (New-TimeSpan -Minutes $DeployEveryMinutes) `
+        -RepetitionDuration ([TimeSpan]::MaxValue)
+} catch {
+    # Some Windows builds reject TimeSpan::MaxValue here. Ten years is indefinite enough.
+    $deployTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date `
+        -RepetitionInterval (New-TimeSpan -Minutes $DeployEveryMinutes)
+    $deployTrigger.Repetition.Duration = "P3650D"
+    $deployTrigger.Repetition.StopAtDurationEnd = $false
+}
 $deploySettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -MultipleInstances IgnoreNew
 Register-ScheduledTask -TaskName $deployTask -Action $deployAction -Trigger $deployTrigger `
     -Settings $deploySettings -User "SYSTEM" -RunLevel Highest -Force | Out-Null
 Say "  ok    task '$deployTask' created (every $DeployEveryMinutes min)"
+# Read the repetition back from the registered task rather than trusting what was asked
+# for. This is the setting that silently degrades, so it is worth one line to prove it.
+$rep = (Get-ScheduledTask -TaskName $deployTask).Triggers.Repetition
+if ($rep.Duration -or -not $rep.StopAtDurationEnd) {
+    Say "  ok    repetition: every $($rep.Interval), duration '$($rep.Duration)', stopAtEnd=$($rep.StopAtDurationEnd)"
+} else {
+    Say "  FAIL  repetition has no duration and stopAtDurationEnd=True -- polling may stop on its own"
+}
 
 Say "  starting '$TaskName'..."
 Start-ScheduledTask -TaskName $TaskName
