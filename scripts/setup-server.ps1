@@ -155,16 +155,48 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot "run-peoplemodelling.cmd") -Dest
 Say "  wrote $liveLauncher"
 
 Say "  installing backend requirements machine-wide..."
-& $PythonExe -m pip install --ignore-installed -r (Join-Path $repo "backend\requirements.txt") 2>&1 |
-    Select-Object -Last 5 | ForEach-Object { Say "    $_" }
-# The tell-tale that the shell was not elevated and the install went somewhere SYSTEM
-# cannot see. Checked by probing a package the app imports, from the global tree.
-$sitePackages = Join-Path (Split-Path $PythonExe -Parent) "Lib\site-packages"
-foreach ($pkg in @("fastapi", "uvicorn", "pandas")) {
-    $present = Test-Path (Join-Path $sitePackages $pkg)
-    if ($present) { Say "  ok    $pkg is in the machine-wide site-packages" }
-    else { Say "  FAIL  $pkg is NOT in $sitePackages -- it went per-user and SYSTEM will not see it" }
+# NO --ignore-installed. C:\Python314 is SHARED -- FazuraGPT, the Talent Portal and
+# others run on it. --ignore-installed forces a reinstall of EVERY requirement,
+# including packages those apps have loaded right now, and Windows will not let pip
+# replace a .pyd a live process has mapped: it fails with "[WinError 5] Access is
+# denied" on, say, numpy, while already elevated. Worse, where it succeeds it has
+# silently swapped another team's dependency underneath them.
+#
+# Plain install adds only what is missing and leaves everything else alone. The
+# per-user-shadowing problem --ignore-installed exists to solve is handled below, by
+# asking the interpreter where each module actually resolves from.
+& $PythonExe -m pip install -r (Join-Path $repo "backend\requirements.txt") 2>&1 |
+    Select-Object -Last 6 | ForEach-Object { Say "    $_" }
+
+# Where does each import ACTUALLY come from? Test-Path on site-packages cannot tell a
+# machine-wide install from a per-user one that shadows it, and that distinction is the
+# whole point: the app runs as SYSTEM, which cannot see per-user packages, so a package
+# resolving under AppData is an import error waiting for the first request that needs it.
+Say "  checking what the app's own interpreter resolves..."
+$probe = @'
+import importlib, os, sys
+mods = ["fastapi", "uvicorn", "pandas", "openpyxl", "PyPDF2", "sqlalchemy",
+        "pydantic", "tenacity", "multipart", "databricks.sdk"]
+roaming = os.environ.get("APPDATA", "").lower()
+for name in mods:
+    try:
+        m = importlib.import_module(name)
+    except Exception as exc:
+        print(f"MISSING {name}: {type(exc).__name__}")
+        continue
+    path = (getattr(m, "__file__", "") or "").lower()
+    if roaming and roaming in path:
+        print(f"PERUSER {name}: {path}")
+    else:
+        print(f"OK      {name}")
+'@
+$probeFile = Join-Path $env:TEMP "pm-probe-imports.py"
+[IO.File]::WriteAllText($probeFile, $probe, (New-Object Text.UTF8Encoding($false)))
+& $PythonExe $probeFile 2>&1 | ForEach-Object {
+    if ($_ -match '^OK') { Say "  ok    $_" }
+    else { Say "  FAIL  $_" }
 }
+Remove-Item -LiteralPath $probeFile -Force -ErrorAction SilentlyContinue
 
 Say "  building the frontend..."
 Push-Location (Join-Path $repo "frontend")

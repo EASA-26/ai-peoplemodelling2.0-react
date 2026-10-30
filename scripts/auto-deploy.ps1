@@ -423,21 +423,43 @@ function Invoke-Build {
 }
 
 function Invoke-PipInstall {
-    # The app runs as SYSTEM. A pip install from a non-elevated shell silently falls back
-    # to PER-USER site-packages, which SYSTEM cannot see -- the app then fails imports
-    # while every standalone test passes. This script runs as SYSTEM (so, elevated), and
-    # --ignore-installed matters: without it pip sees a per-user copy and skips the
-    # global install.
+    # The app runs as SYSTEM, so packages must be machine-wide: a per-user install is
+    # invisible to it, and the app then fails imports while every standalone test passes.
+    # This task runs as SYSTEM, so it is already elevated and a plain install lands
+    # machine-wide.
+    #
+    # Deliberately NOT --ignore-installed. C:\Python314 is SHARED with FazuraGPT, the
+    # Talent Portal and others. That flag forces a reinstall of every requirement,
+    # including packages those apps have loaded -- which Windows refuses ("[WinError 5]
+    # Access is denied" on a .pyd a live process has mapped) and which, where it
+    # succeeds, swaps another team's dependency underneath them. A deploy of this app
+    # must never be able to break theirs.
     if ($WhatIf) { Write-Log "WHATIF would run pip install -r backend\requirements.txt"; return $true }
-    Write-Log "installing backend requirements machine-wide"
     $req = Join-Path $repo "backend\requirements.txt"
-    $pip = Invoke-Program -FilePath $pythonExe -Arguments "-m pip install --ignore-installed -r `"$req`"" -TimeoutSeconds 900
+
+    # Look before touching anything shared. --dry-run names what would change; an
+    # upgrade of an already-installed package is the dangerous case, so it is logged
+    # loudly rather than done quietly.
+    $plan = Invoke-Program -FilePath $pythonExe -Arguments "-m pip install --dry-run -r `"$req`"" -TimeoutSeconds 300
+    if ($plan.ExitCode -eq 0) {
+        $would = ($plan.Output -split "`n" | Where-Object { $_ -match '^\s*Would install' }) -join " "
+        if ($would) { Write-Log "pip plan: $would" } else { Write-Log "pip: nothing to install, every requirement is already present"; return $true }
+    }
+
+    Write-Log "installing backend requirements machine-wide"
+    $pip = Invoke-Program -FilePath $pythonExe -Arguments "-m pip install -r `"$req`"" -TimeoutSeconds 900
     if ($pip.ExitCode -ne 0) {
-        Write-Log "pip install failed: $($pip.Output)" "ERROR"
+        # A locked .pyd means another app on this box is using that package right now.
+        # Rolling the deploy back is right; forcing the install is not.
+        if ($pip.Output -match "WinError 5|Access is denied") {
+            Write-Log "pip hit a locked file -- another app on this shared interpreter has it loaded. NOT forcing it: $($pip.Output)" "ERROR"
+        } else {
+            Write-Log "pip install failed: $($pip.Output)" "ERROR"
+        }
         return $false
     }
     if ($pip.Output -match "Defaulting to user installation") {
-        Write-Log "pip defaulted to a USER install -- SYSTEM will not see these packages. Run this elevated." "ERROR"
+        Write-Log "pip defaulted to a USER install -- SYSTEM will not see these packages." "ERROR"
         return $false
     }
     Write-Log "backend requirements installed"
