@@ -57,6 +57,51 @@ function Check([bool]$ok, [string]$pass, [string]$fail) {
 }
 function Would([string]$t) { if ($Apply) { Say "  do    $t" } else { Say "  would $t" } }
 
+# Run a native program and return its exit code and combined output.
+#
+# NOT `& exe ... 2>&1`. In Windows PowerShell 5.1 that wraps every stderr line from a
+# native executable in a NativeCommandError, which $ErrorActionPreference = "Stop" turns
+# into a TERMINATING error -- even when the program exited 0. pip and npm write progress
+# and warnings to stderr constantly, so the first such line killed this script with an
+# empty "python.exe :" message and no cause. System.Diagnostics.Process has no such
+# behaviour, and draining both pipes asynchronously avoids the deadlock that fills a
+# pipe buffer and hangs the child forever.
+function Invoke-Native {
+    param([string]$FilePath, [string]$Arguments, [string]$WorkingDirectory = $repo,
+          [int]$TimeoutSeconds = 1800, [hashtable]$Env = @{})
+    $saved = @{}
+    foreach ($k in $Env.Keys) {
+        $saved[$k] = [Environment]::GetEnvironmentVariable($k)
+        [Environment]::SetEnvironmentVariable($k, $Env[$k])
+    }
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName               = $FilePath
+        $psi.Arguments              = $Arguments
+        $psi.WorkingDirectory       = $WorkingDirectory
+        $psi.UseShellExecute        = $false
+        $psi.CreateNoWindow         = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError  = $true
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        $out = $proc.StandardOutput.ReadToEndAsync()
+        $err = $proc.StandardError.ReadToEndAsync()
+        if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
+            try { $proc.Kill() } catch { }
+            return [pscustomobject]@{ ExitCode = -1; Output = "timed out after ${TimeoutSeconds}s" }
+        }
+        return [pscustomobject]@{ ExitCode = $proc.ExitCode; Output = ($out.Result + "`n" + $err.Result).Trim() }
+    } finally {
+        foreach ($k in $Env.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) }
+    }
+}
+
+# Show the last few lines of a program's output, indented.
+function Show-Tail($result, [int]$Lines = 6) {
+    ($result.Output -split "`n" | Where-Object { $_.Trim() } | Select-Object -Last $Lines) |
+        ForEach-Object { Say "    $($_.TrimEnd())" }
+}
+
 Say "People Modelling.AI -- server provisioning"
 Say "Mode: $mode"
 Say "Repo: $repo"
@@ -169,9 +214,10 @@ if (Test-Path -LiteralPath $venvPython) {
     Say "  have  virtual environment $venvDir"
 } else {
     Say "  creating the virtual environment (shared C:\Python314 is not touched)..."
-    & $PythonExe -m venv $venvDir 2>&1 | ForEach-Object { Say "    $_" }
-    if (-not (Test-Path -LiteralPath $venvPython)) {
+    $mk = Invoke-Native -FilePath $PythonExe -Arguments "-m venv `"$venvDir`"" -TimeoutSeconds 300
+    if ($mk.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $venvPython)) {
         Say "  FAIL  could not create $venvDir"
+        Show-Tail $mk
         exit 1
     }
     Say "  ok    created $venvDir"
@@ -181,8 +227,16 @@ Say "  installing backend requirements into .venv (a few minutes -- pandas and n
 # NO --ignore-installed, even here: it forces a pointless full reinstall on every run,
 # and it is the flag that failed with "[WinError 5] Access is denied" trying to replace
 # a .pyd the running app had mapped.
-& $venvPython -m pip install -r (Join-Path $repo "backend\requirements.txt") 2>&1 |
-    Select-Object -Last 6 | ForEach-Object { Say "    $_" }
+$req = Join-Path $repo "backend\requirements.txt"
+$pip = Invoke-Native -FilePath $venvPython -Arguments "-m pip install -r `"$req`"" -TimeoutSeconds 1800
+Show-Tail $pip
+if ($pip.ExitCode -ne 0) {
+    # A real failure, as opposed to pip merely writing a warning to stderr -- which is
+    # what used to kill this script before Invoke-Native replaced `2>&1`.
+    Say "  FAIL  pip exited $($pip.ExitCode). The import check below will say what is missing."
+} else {
+    Say "  ok    pip finished"
+}
 $PythonExe = $venvPython   # everything below asks the interpreter the APP will use
 
 # Where does each import ACTUALLY come from? Test-Path on site-packages cannot tell a
@@ -209,22 +263,40 @@ for name in mods:
 '@
 $probeFile = Join-Path $env:TEMP "pm-probe-imports.py"
 [IO.File]::WriteAllText($probeFile, $probe, (New-Object Text.UTF8Encoding($false)))
-& $PythonExe $probeFile 2>&1 | ForEach-Object {
-    if ($_ -match '^OK') { Say "  ok    $_" }
-    else { Say "  FAIL  $_" }
+$probeResult = Invoke-Native -FilePath $PythonExe -Arguments "`"$probeFile`"" -TimeoutSeconds 300
+foreach ($line in ($probeResult.Output -split "`n" | Where-Object { $_.Trim() })) {
+    if ($line -match '^OK') { Say "  ok    $($line.TrimEnd())" }
+    else { Say "  FAIL  $($line.TrimEnd())" }
 }
 Remove-Item -LiteralPath $probeFile -Force -ErrorAction SilentlyContinue
 
-Say "  building the frontend..."
-Push-Location (Join-Path $repo "frontend")
-try {
-    & $npm install --include=dev 2>&1 | Select-Object -Last 3 | ForEach-Object { Say "    $_" }
-    $env:APP_BASE_PATH = $BasePath
-    & $npm run build 2>&1 | Select-Object -Last 5 | ForEach-Object { Say "    $_" }
-    Remove-Item Env:\APP_BASE_PATH -ErrorAction SilentlyContinue
-} finally { Pop-Location }
-if (Test-Path (Join-Path $repo "frontend\dist\index.html")) { Say "  ok    frontend\dist built" }
-else { Say "  FAIL  frontend\dist\index.html missing after the build" }
+Say "  building the frontend (npm install can take several minutes)..."
+$frontend = Join-Path $repo "frontend"
+$npmInstall = Invoke-Native -FilePath "cmd.exe" -Arguments "/c `"`"$npm`" install --include=dev`"" `
+    -WorkingDirectory $frontend -TimeoutSeconds 1800
+Show-Tail $npmInstall 3
+if ($npmInstall.ExitCode -ne 0) { Say "  FAIL  npm install exited $($npmInstall.ExitCode)" }
+
+# APP_BASE_PATH is passed through the process environment, not a shell assignment: a
+# Git Bash shell would translate "/peoplemodelling/" into a Windows path and the built
+# index.html would point at C:/Program Files/Git/peoplemodelling/ .
+$npmBuild = Invoke-Native -FilePath "cmd.exe" -Arguments "/c `"`"$npm`" run build`"" `
+    -WorkingDirectory $frontend -TimeoutSeconds 1800 -Env @{ APP_BASE_PATH = $BasePath }
+Show-Tail $npmBuild 5
+if (Test-Path (Join-Path $repo "frontend\dist\index.html")) {
+    Say "  ok    frontend\dist built"
+    # Prove the base path actually reached the output. A build that "succeeded" with the
+    # wrong base produces a page whose assets 404 behind IIS, which looks like a server
+    # problem and is not.
+    $indexHtml = Get-Content (Join-Path $repo "frontend\dist\index.html") -Raw
+    if ($indexHtml -match [regex]::Escape("$BasePath" + "assets/")) {
+        Say "  ok    assets are referenced under $BasePath"
+    } else {
+        Say "  FAIL  index.html does not reference $BasePath -- the base path did not reach the build"
+    }
+} else {
+    Say "  FAIL  frontend\dist\index.html missing after the build"
+}
 
 # The app task. At startup so a reboot brings it back, and restarting on failure so a
 # crash does not need a human. SYSTEM because that is what can bind and what the
