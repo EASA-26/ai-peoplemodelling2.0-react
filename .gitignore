@@ -18,3 +18,10 @@ logs/
 Thumbs.db
 .idea/
 .vscode/
+
+# ...but keep the reference copy, which holds no secrets
+!.env.local.example
+
+# Deploy state written on the server
+logs/
+.app_state/

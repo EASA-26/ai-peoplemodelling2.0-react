@@ -6,9 +6,12 @@ import PersonToPositionPage from "./pages/PersonToPositionPage";
 import DataManagementPage from "./pages/DataManagementPage";
 import LoginPage from "./pages/LoginPage";
 
+// Served at the root in development and on Databricks Apps, and under /peoplemodelling
+// when IIS serves it as an application on gencodev.tnb.com.my. BASE_URL is the build's
+// base (vite.config.ts), so routes resolve under either without a second set of paths.
 function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.BASE_URL}>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
 

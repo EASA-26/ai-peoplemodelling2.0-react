@@ -1,0 +1,44 @@
+<!doctype html>
+<!-- Shown by IIS in place of a 502 from the reverse proxy, which is what the browser
+     gets while the app is restarting. Copied to the IIS application folder by
+     scripts\setup-server.ps1; referenced by the web.config that setup-hana-path.ps1
+     writes. Static and self-contained: it has to render when the app is down, so it
+     loads nothing from the app and nothing from any CDN. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>People Modelling.AI — restarting</title>
+<style>
+  :root { color-scheme: light; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center;
+    justify-content: center; background: #f4f7fb; color: #1f2733;
+    font: 15px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  .card {
+    max-width: 30rem; margin: 1.5rem; padding: 2rem 2.25rem; background: #fff;
+    border: 1px solid #d7dee7; border-top: 3px solid #d3a12a; border-radius: 6px;
+  }
+  h1 { margin: 0 0 .5rem; font-size: 1.25rem; color: #0f2c4d; }
+  p { margin: 0 0 .75rem; }
+  .muted { color: #67737f; font-size: .85rem; margin-bottom: 0; }
+  .dot {
+    display: inline-block; width: .5rem; height: .5rem; border-radius: 50%;
+    background: #d3a12a; margin-right: .5rem; vertical-align: middle;
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .3 } }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1><span class="dot"></span>People Modelling.AI is restarting</h1>
+    <p>A new version is being deployed. This usually takes well under a minute.</p>
+    <p>This page refreshes itself — no need to do anything.</p>
+    <p class="muted">If it is still here after five minutes, the deploy may have failed.
+       Tell the EASA team, who can read <code>logs\deploy.log</code> on the server.</p>
+  </div>
+  <script>setTimeout(function () { location.reload(); }, 10000);</script>
+</body>
+</html>

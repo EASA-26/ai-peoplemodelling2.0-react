@@ -20,7 +20,9 @@ export default function MainLayout() {
     const handleLogout = () => {
         localStorage.removeItem("token");
         localStorage.removeItem("username");
-        window.location.href = "/login";
+        // BASE_URL ends in a slash ("/" or "/peoplemodelling/"), so this lands inside
+        // the application wherever it is served from. A bare "/login" leaves it.
+        window.location.href = `${import.meta.env.BASE_URL}login`;
     };
 
     const username = localStorage.getItem("username") || "admin";

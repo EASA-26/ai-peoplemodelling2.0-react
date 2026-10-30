@@ -1,4 +1,5 @@
 import { useState } from "react";
+import axios from "axios";
 import { Building } from "lucide-react";
 
 export default function LoginPage() {
@@ -11,17 +12,15 @@ export default function LoginPage() {
         e.preventDefault();
         setLoading(true);
         try {
-            // Connect to the fastapi /login when api is ready, for now dummy matching
-            const res = await fetch("/api/auth/login", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ username, password })
-            });
-            const data = await res.json();
+            // axios, not fetch: every other page uses it, and its baseURL (set in
+            // main.tsx) is what keeps API calls inside the application when IIS serves
+            // the app under /peoplemodelling. A bare fetch("/api/...") leaves the
+            // application and 404s at the site root.
+            const { data } = await axios.post("/api/auth/login", { username, password });
             if (data.logged_in) {
                 localStorage.setItem("token", data.token);
                 localStorage.setItem("username", username);
-                window.location.href = "/";
+                window.location.href = import.meta.env.BASE_URL;
             } else {
                 setError(data.error || "Invalid username or password");
             }
@@ -30,7 +29,8 @@ export default function LoginPage() {
             if (username === "admin" && password === "genco2025") {
                 localStorage.setItem("token", "dummy-fallback-token");
                 localStorage.setItem("username", username);
-                window.location.href = "/";
+                // BASE_URL, not "/": under IIS the root is the shared site, not this app.
+                window.location.href = import.meta.env.BASE_URL;
             } else {
                 setError("Network error. Please try again.");
             }
