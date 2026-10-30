@@ -41,21 +41,19 @@ export default function MainLayout() {
         <div className="flex h-screen bg-[#F8FAFC]">
             {/* Sidebar */}
             <aside className="w-64 bg-white border-r border-slate-200 flex flex-col hidden md:flex">
-                {/* Brand band. The supplied logo has an opaque #2b2825 field baked into
-                    the PNG, so the band is that exact colour and the image blends into
-                    it -- otherwise it reads as a dark rectangle pasted onto a white
-                    sidebar. Full-bleed to the sidebar edges for the same reason. */}
-                <div className="bg-[#2b2825] px-5 py-4 flex items-center justify-center">
+                {/* The logo was supplied as light marks on a dark field. It is redrawn
+                    as slate-900 ink on transparency (see the note in assets), so it sits
+                    on the white sidebar as part of the UI rather than inside a dark band
+                    that would be the only block of colour on the page.
+
+                    The blue Building tile that used to sit here is gone: a logo, an icon
+                    and a title together were three marks doing one job. */}
+                <div className="px-6 pt-6 pb-5 border-b border-slate-100">
                     <img
                         src={tnbGencoTed}
                         alt="TNB GENCO · TED"
-                        className="h-10 w-auto max-w-full"
+                        className="h-7 w-auto mb-4"
                     />
-                </div>
-                {/* The blue Building tile that used to sit here is gone: with the brand
-                    band above it, an icon, a logo and a title stacked together was three
-                    marks competing for the same job. */}
-                <div className="px-6 pt-5 pb-1">
                     <h1 className="font-bold text-slate-800 text-lg leading-tight">People Modelling.AI</h1>
                     <p className="text-xs text-slate-500">Admin Dashboard</p>
                 </div>
